@@ -140,3 +140,21 @@ Design-level scope, detailed breakdown to follow once Phase 2 is complete:
 
 Project documentation (architecture notes, API references, etc.) will be
 added here as Phase 1 progresses.
+
+## Development
+
+Common tasks are defined in [Taskfile.yml](../Taskfile.yml) and run with
+[Task](https://taskfile.dev) (`task --list` shows everything):
+
+| Task | What it does |
+|------|--------------|
+| `task test` / `task cover` | Unit tests, optionally with a coverage summary |
+| `task lint` / `task vet` / `task fmt` | Static checks |
+| `task testdb:up` | Build and start a disposable Postgres (`build/testdb/Containerfile`) on port 54329 |
+| `task testdb:down` | Remove it |
+| `task testdb:psql` | Open `psql` inside it |
+| `task test:integration` | Run tests with `GOWF_TEST_DSN` pointing at the test database (extra `go test` flags go after `--`) |
+
+The container engine is auto-detected (Podman first, then Docker); override
+with `task CONTAINER_ENGINE=docker testdb:up`. The test database starts with
+an empty schema on purpose; the code under test applies the migrations.

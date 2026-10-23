@@ -1,0 +1,13 @@
+# Throwaway Postgres for local development and integration tests.
+# Intentionally contains NO schema: the code under test (Store.Migrate) is
+# responsible for creating it.
+FROM docker.io/library/postgres:17-alpine
+
+ENV POSTGRES_USER=gowf \
+    POSTGRES_PASSWORD=gowf \
+    POSTGRES_DB=gowf_test
+
+# Trade durability for speed; this database is disposable.
+CMD ["postgres", "-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off"]
+
+EXPOSE 5432

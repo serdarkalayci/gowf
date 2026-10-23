@@ -1,0 +1,102 @@
+version: '3'
+
+vars:
+  # Podman if available, otherwise Docker. Override: `task CONTAINER_ENGINE=docker testdb:up`
+  CONTAINER_ENGINE:
+    sh: command -v podman >/dev/null 2>&1 && echo podman || echo docker
+  TESTDB_IMAGE: gowf-testdb
+  TESTDB_CONTAINER: gowf-testdb
+  TESTDB_PORT: '54329'
+  GOWF_TEST_DSN: postgres://gowf:gowf@localhost:{{.TESTDB_PORT}}/gowf_test?sslmode=disable
+
+tasks:
+  default:
+    desc: List available tasks
+    silent: true
+    cmds:
+      - task --list
+
+  build:
+    desc: Build all packages
+    cmds:
+      - go build ./...
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  fmt:
+    desc: Fail if any file is not gofmt-formatted
+    silent: true
+    cmds:
+      - |
+        unformatted=$(gofmt -l .)
+        if [ -n "$unformatted" ]; then
+          echo "Not gofmt-formatted:"; echo "$unformatted"; exit 1
+        fi
+
+  lint:
+    desc: Run golangci-lint
+    cmds:
+      - golangci-lint run ./...
+
+  test:
+    desc: Run unit tests (no database needed)
+    cmds:
+      - go test ./...
+
+  cover:
+    desc: Run tests with a coverage summary
+    cmds:
+      - go test ./... -coverprofile=coverage.out -covermode=atomic
+      - go tool cover -func=coverage.out | tail -1
+
+  test:integration:
+    desc: Run all tests against the test Postgres (extra go test flags after --)
+    env:
+      GOWF_TEST_DSN: '{{.GOWF_TEST_DSN}}'
+    cmds:
+      - go test ./... -count=1 {{.CLI_ARGS}}
+
+  testdb:up:
+    desc: Build and start the disposable test Postgres (waits until ready)
+    # The base image is public, so the pull uses an empty, temporary auth
+    # config. This keeps broken credential helpers in ~/.docker/config.json
+    # (e.g. an expired gcloud login) from failing the build.
+    cmds:
+      - |
+        auth=$(mktemp -d)
+        trap 'rm -rf "$auth"' EXIT
+        echo '{}' > "$auth/auth.json"
+        export DOCKER_CONFIG="$auth" REGISTRY_AUTH_FILE="$auth/auth.json"
+        {{.CONTAINER_ENGINE}} build -t {{.TESTDB_IMAGE}} -f build/testdb/Containerfile build/testdb
+        {{.CONTAINER_ENGINE}} rm -f {{.TESTDB_CONTAINER}} >/dev/null 2>&1 || true
+        {{.CONTAINER_ENGINE}} run -d --name {{.TESTDB_CONTAINER}} -p {{.TESTDB_PORT}}:5432 {{.TESTDB_IMAGE}}
+      - |
+        printf 'Waiting for Postgres'
+        for i in $(seq 1 60); do
+          if {{.CONTAINER_ENGINE}} exec {{.TESTDB_CONTAINER}} pg_isready -U gowf -d gowf_test >/dev/null 2>&1; then
+            echo ' ready.'
+            echo 'export GOWF_TEST_DSN="{{.GOWF_TEST_DSN}}"'
+            exit 0
+          fi
+          printf '.'; sleep 1
+        done
+        echo ' timed out'; exit 1
+
+  testdb:down:
+    desc: Stop and remove the test Postgres
+    cmds:
+      - '{{.CONTAINER_ENGINE}} rm -f {{.TESTDB_CONTAINER}} || true'
+
+  testdb:logs:
+    desc: Tail the test Postgres logs
+    cmds:
+      - '{{.CONTAINER_ENGINE}} logs -f {{.TESTDB_CONTAINER}}'
+
+  testdb:psql:
+    desc: Open psql inside the test Postgres
+    interactive: true
+    cmds:
+      - '{{.CONTAINER_ENGINE}} exec -it {{.TESTDB_CONTAINER}} psql -U gowf -d gowf_test'
